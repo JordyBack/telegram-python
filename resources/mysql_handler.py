@@ -152,6 +152,18 @@ def unban_user(user_id):
         banned.pop(banned.index(user_id))
         return unban_user
 
+def update_started_conversation(user_id):
+    try:
+        connection = create_connection()
+        with connection.cursor() as cursor:
+            sql = "UPDATE users SET started_conversation = 1 WHERE userid = %s"
+            cursor.execute(sql, (user_id,))
+        connection.commit()
+    except Exception as e:
+        print(f"An error occurred in update_started_conversation: {e}")
+    finally:
+        close_connection(connection)
+
 checkDatabaseConnection()
 createTables = createTables()
 open_tickets = getOpenTickets()
