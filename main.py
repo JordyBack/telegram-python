@@ -1,22 +1,23 @@
-import config
-import pymysql
-import telebot
-import types
-import arrow
-import logging
+# Importations standard
 import time
+import logging
 
-# Gestionnaire MySQL, Markups, Message
+# Importations tiers
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
+from datetime import datetime
+
+# Importations locales
 from resources import mysql_handler as mysql
 from resources import markups_handler as markups
 from resources import msg_handler as msg
+from common_functions import get_user_package_info, determine_user_language
 
-from common_functions import get_user_package_info
-from common_functions import determine_user_language
+# Paramètres de configuration
+import config
 
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
-from logging import StreamHandler
-from datetime import datetime
+# Configuration du logger
+logging.basicConfig(level=logging.INFO)
 
 bot = telebot.TeleBot(config.token)
 channel_username = '@spliptv'
@@ -43,6 +44,12 @@ def callback_handler(call):
         logging.info("[📞] Callback reçu: %s", call.data)
         user_id = call.from_user.id
         user_language = determine_user_language(user_id)
+
+        if not mysql.user_tables(user_id)['started_conversation']:
+            # Si started_conversation est 0, cela signifie que l'utilisateur n'a pas encore démarré une conversation
+            bot.send_message(message.chat.id, start_text.format(message.from_user.first_name) + msg.repo(lang=user_language),
+                 parse_mode='Markdown', disable_web_page_preview=True, reply_markup=markup)
+            mysql.update_user_started_conversation(user_id, 1)  # Mettez à jour la colonne started_conversation à 1
         
         if call.data == 'EnglishCallbackdata':
             update_user_language(user_id, 'en')
@@ -130,7 +137,6 @@ def callback_handler(call):
                 response_text = config.text_messages['paypal_payment'][user_language]
             if response_text is not None:
                 bot.send_message(user_id, response_text, parse_mode='Markdown', reply_markup=markup)
-                print(f"Sent payment response to user {user_id} for {payment_method}.")
 
         elif call.data == 'payment_completed':
             default_values = {'package_duration': '1 an', 'package_screen': '1 écran pour un montant total de 60 euros'}
@@ -142,32 +148,34 @@ def callback_handler(call):
                 screens_info = f" with {user_package['package_screen']} screen(s)"
             else:
                 screens_info = " 1 écran"
-            print(f"User {user_id} completed payment for {user_package['package_duration']}{screens_info}.")
             user_username = call.from_user.username
             alert_text = f"⚠️ Paiement effectué par l'utilisateur {user_username} ({user_id}) pour le forfait {user_packages[user_id]['package_duration']}"
             if 'package_screen' in user_packages[user_id]:
                 alert_text += f" avec {user_packages[user_id]['package_screen']}"
             alert_text += " ! Assistance requise. ⚠️"         
             bot.send_message(support_group_chat_id, alert_text)
-            print(f"Sent payment alert to support group.")
             user_language = determine_user_language(user_id)
             confirmation_text_dict = config.text_messages.get('payment_confirmation', {})
             confirmation_text = confirmation_text_dict.get(user_language, 'Paiement effectué ! Un agent du support vous assistera sous peu.')
-            print(f"Confirmation text: {confirmation_text}")  
             try:
                 bot.send_message(user_id, confirmation_text)
-                print(f"Sent payment confirmation to user {user_id}.")
             except Exception as e:
                 print(f"Error sending confirmation message to user {user_id}: {e}")
 
     except Exception as e:
         print(f"An error occurred in callback handler: {e}")
-        bot.reply_to(call.message, '❌ Une erreur s\'est produite. Veuillez réessayer plus tard.')
+        error_message = bot.reply_to(call.message, '❌ Une erreur s\'est produite. Veuillez réessayer plus tard.')
+        chat_id = call.message.chat.id
+        message_id = error_message.message_id
+        time.sleep(1)  # Attendre 1 seconde
+        bot.delete_message(chat_id, message_id)
         return
 
 # Envoie du message /start en privée et /startcanal pour le canal
 @bot.message_handler(commands=['start'])
 def start(message):
+    user_id = message.chat.id
+    mysql.update_user_started_conversation(user_id, 1)
     if message.chat.type == 'private':
         user_id = message.from_user.id
         user_language = determine_user_language(user_id)
